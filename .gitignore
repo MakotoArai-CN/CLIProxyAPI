@@ -2,9 +2,17 @@
 cli-proxy-api
 *.exe
 
+# Build output
+dist/*
+
 # Configuration
 config.yaml
 .env
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
 
 # Generated content
 bin/*
@@ -51,6 +59,12 @@ GEMINI.md
 .bmad/*
 _bmad/*
 _bmad-output/*
+.playwright-mcp/*
+midscene_run/*
+
+# Build scripts (local variants)
+build-all.ps1
+build-all.sh
 
 # macOS
 .DS_Store

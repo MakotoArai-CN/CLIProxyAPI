@@ -77,6 +77,16 @@ type Config struct {
 	// Default: 60. Max: 3600.
 	RedisUsageQueueRetentionSeconds int `yaml:"redis-usage-queue-retention-seconds" json:"redis-usage-queue-retention-seconds"`
 
+	// UsageDBPath is the file path for the SQLite database used to persist usage statistics across restarts.
+	// When empty, usage data is kept in memory only and lost on restart.
+	UsageDBPath string `yaml:"usage-db-path" json:"usage-db-path"`
+
+	// UsageQueryKeys is a whitelist of API keys allowed to query usage statistics via /v1/usage.
+	UsageQueryKeys []string `yaml:"usage-query-keys" json:"usage-query-keys"`
+
+	// AccessControl configures model access policies and IP risk management.
+	AccessControl AccessControlConfig `yaml:"access-control" json:"access-control"`
+
 	// DisableCooling disables quota cooldown scheduling when true.
 	DisableCooling bool `yaml:"disable-cooling" json:"disable-cooling"`
 
@@ -1902,3 +1912,26 @@ func removeLegacyAuthBlock(root *yaml.Node) {
 	}
 	removeMapKey(root, "auth")
 }
+
+// AccessControlConfig configures model access policies and IP risk management.
+type AccessControlConfig struct {
+	// DBPath is the file path for the SQLite database used to persist access control state.
+	// When empty, access control is disabled.
+	DBPath string `yaml:"db-path" json:"db-path"`
+
+	// AutoPolicy configures automatic IP ban/risk-control thresholds.
+	AutoPolicy AccessControlAutoPolicy `yaml:"auto-policy" json:"auto-policy"`
+}
+
+// AccessControlAutoPolicy configures automatic responses to excessive invalid requests.
+type AccessControlAutoPolicy struct {
+	InvalidModelThreshold  int    `yaml:"invalid-model-threshold" json:"invalid-model-threshold"`
+	InvalidModelWindow     int    `yaml:"invalid-model-window" json:"invalid-model-window"`
+	InvalidModelAction     string `yaml:"invalid-model-action" json:"invalid-model-action"`
+	InvalidModelDuration   int    `yaml:"invalid-model-duration" json:"invalid-model-duration"`
+	InvalidAPIKeyThreshold int    `yaml:"invalid-apikey-threshold" json:"invalid-apikey-threshold"`
+	InvalidAPIKeyWindow    int    `yaml:"invalid-apikey-window" json:"invalid-apikey-window"`
+	InvalidAPIKeyAction    string `yaml:"invalid-apikey-action" json:"invalid-apikey-action"`
+	InvalidAPIKeyDuration  int    `yaml:"invalid-apikey-duration" json:"invalid-apikey-duration"`
+}
+

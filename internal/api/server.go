@@ -24,6 +24,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/access"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/accesscontrol"
+	internalHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/middleware"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
@@ -75,6 +77,7 @@ type serverOptionConfig struct {
 	postAuthPersistHook  auth.PostAuthHook
 	pluginHost           *pluginhost.Host
 	configReloadHook     func(context.Context, *config.Config)
+	accessCtrl           *accesscontrol.Controller
 }
 
 // ServerOption customises HTTP server construction.
@@ -174,6 +177,13 @@ func WithConfigReloadHook(hook func(context.Context, *config.Config)) ServerOpti
 	}
 }
 
+// WithAccessController injects the access control controller into the server.
+func WithAccessController(ctrl *accesscontrol.Controller) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.accessCtrl = ctrl
+	}
+}
+
 // Server represents the main API server.
 // It encapsulates the Gin engine, HTTP server, handlers, and configuration.
 type Server struct {
@@ -233,6 +243,12 @@ type Server struct {
 	envManagementSecret bool
 
 	localPassword string
+
+	// accessCtrl handles IP and model access control.
+	accessCtrl *accesscontrol.Controller
+
+	// usageQuery handles per-API-key usage query endpoints.
+	usageQuery *internalHandlers.UsageQueryHandler
 
 	keepAliveEnabled   bool
 	keepAliveTimeout   time.Duration
@@ -349,6 +365,15 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	}
 	s.localPassword = optionState.localPassword
 
+	// Initialize access control if configured
+	if optionState.accessCtrl != nil {
+		s.accessCtrl = optionState.accessCtrl
+		s.mgmt.SetAccessController(s.accessCtrl)
+	}
+
+	// Initialize usage query handler
+	s.usageQuery = internalHandlers.NewUsageQueryHandler(cfg)
+
 	// Home heartbeat gate: when home is enabled, block all endpoints with 503 until the
 	// subscribe-config heartbeat connection is healthy.
 	engine.Use(s.homeHeartbeatMiddleware())
@@ -422,6 +447,7 @@ func (s *Server) setupRoutes() {
 	s.engine.HEAD("/healthz", healthzHandler)
 
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
+	s.engine.GET("/usage-query.html", s.usageQuery.ServeUsageQueryPage)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
@@ -430,6 +456,8 @@ func (s *Server) setupRoutes() {
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
 	v1.Use(AuthMiddleware(s.accessManager))
+	v1.Use(middleware.IPGateMiddleware(s.accessCtrl))
+	v1.Use(middleware.ModelGateMiddleware(s.accessCtrl))
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -446,6 +474,7 @@ func (s *Server) setupRoutes() {
 		v1.GET("/responses", openaiResponsesHandlers.ResponsesWebsocket)
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
+		v1.GET("/usage", s.usageQuery.GetUsage)
 	}
 
 	openaiV1 := s.engine.Group("/openai/v1")
@@ -468,6 +497,8 @@ func (s *Server) setupRoutes() {
 	// Gemini compatible API routes
 	v1beta := s.engine.Group("/v1beta")
 	v1beta.Use(AuthMiddleware(s.accessManager))
+	v1beta.Use(middleware.IPGateMiddleware(s.accessCtrl))
+	v1beta.Use(middleware.ModelGateMiddleware(s.accessCtrl))
 	{
 		v1beta.GET("/models", s.geminiModelsHandler(geminiHandlers))
 		v1beta.POST("/models/*action", geminiHandlers.GeminiHandler)
@@ -633,6 +664,16 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
 		mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
 		mgmt.PATCH("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
+
+		mgmt.GET("/access-control/models", s.mgmt.GetModelPolicies)
+		mgmt.PUT("/access-control/models", s.mgmt.PutModelPolicy)
+		mgmt.DELETE("/access-control/models", s.mgmt.DeleteModelPolicy)
+		mgmt.GET("/access-control/ips", s.mgmt.GetIPRecords)
+		mgmt.PUT("/access-control/ips", s.mgmt.PutIPRecord)
+		mgmt.DELETE("/access-control/ips", s.mgmt.DeleteIPRecord)
+		mgmt.GET("/access-control/auto-policy", s.mgmt.GetAutoPolicies)
+		mgmt.PUT("/access-control/auto-policy", s.mgmt.PutAutoPolicy)
+		mgmt.GET("/access-control/stats", s.mgmt.GetAccessControlStats)
 
 		mgmt.GET("/proxy-url", s.mgmt.GetProxyURL)
 		mgmt.PUT("/proxy-url", s.mgmt.PutProxyURL)
@@ -1697,6 +1738,9 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		s.mgmt.SetConfig(cfg)
 		s.mgmt.SetAuthManager(s.handlers.AuthManager)
 		s.mgmt.SetPluginHost(s.pluginHost)
+	}
+	if s.usageQuery != nil {
+		s.usageQuery.SetConfig(cfg)
 	}
 	s.refreshPluginManagementRoutes()
 
