@@ -181,3 +181,85 @@ func (h *Handler) GetAccessControlStats(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"stats": h.accessCtrl.GetAllIPStats()})
 }
+
+// GetClientWhitelist returns the client whitelist state.
+func (h *Handler) GetClientWhitelist(c *gin.Context) {
+	if h.accessCtrl == nil {
+		c.JSON(http.StatusOK, gin.H{"active": false, "entries": []any{}, "presets": accesscontrol.ClientPresets()})
+		return
+	}
+	state := h.accessCtrl.GetClientWhitelistState()
+	c.JSON(http.StatusOK, gin.H{
+		"active":  state.Active,
+		"entries": state.Entries,
+	})
+}
+
+// PutClientWhitelistActive toggles the client whitelist on/off.
+func (h *Handler) PutClientWhitelistActive(c *gin.Context) {
+	if h.accessCtrl == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "access control not enabled"})
+		return
+	}
+	var body struct {
+		Active bool `json:"active"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if err := h.accessCtrl.SetClientWhitelistActive(body.Active); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// UpsertClientEntry creates or updates a client whitelist entry.
+func (h *Handler) UpsertClientEntry(c *gin.Context) {
+	if h.accessCtrl == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "access control not enabled"})
+		return
+	}
+	var body accesscontrol.ClientEntry
+	if err := c.ShouldBindJSON(&body); err != nil || body.ClientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body: client_id is required"})
+		return
+	}
+	if err := h.accessCtrl.UpsertClientEntry(body); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// DeleteClientEntry removes a client whitelist entry.
+func (h *Handler) DeleteClientEntry(c *gin.Context) {
+	if h.accessCtrl == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "access control not enabled"})
+		return
+	}
+	clientID := c.Query("client_id")
+	if clientID == "" {
+		var body struct {
+			ClientID string `json:"client_id"`
+		}
+		if err := c.ShouldBindJSON(&body); err == nil {
+			clientID = body.ClientID
+		}
+	}
+	if clientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_id parameter required"})
+		return
+	}
+	if err := h.accessCtrl.RemoveClientEntry(clientID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// GetClientPresets returns the built-in known client list.
+func (h *Handler) GetClientPresets(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"presets": accesscontrol.ClientPresets()})
+}

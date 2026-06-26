@@ -457,6 +457,7 @@ func (s *Server) setupRoutes() {
 	v1 := s.engine.Group("/v1")
 	v1.Use(AuthMiddleware(s.accessManager))
 	v1.Use(middleware.IPGateMiddleware(s.accessCtrl))
+	v1.Use(middleware.ClientGateMiddleware(s.accessCtrl))
 	v1.Use(middleware.ModelGateMiddleware(s.accessCtrl))
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
@@ -498,6 +499,7 @@ func (s *Server) setupRoutes() {
 	v1beta := s.engine.Group("/v1beta")
 	v1beta.Use(AuthMiddleware(s.accessManager))
 	v1beta.Use(middleware.IPGateMiddleware(s.accessCtrl))
+	v1beta.Use(middleware.ClientGateMiddleware(s.accessCtrl))
 	v1beta.Use(middleware.ModelGateMiddleware(s.accessCtrl))
 	{
 		v1beta.GET("/models", s.geminiModelsHandler(geminiHandlers))
@@ -674,6 +676,11 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/access-control/auto-policy", s.mgmt.GetAutoPolicies)
 		mgmt.PUT("/access-control/auto-policy", s.mgmt.PutAutoPolicy)
 		mgmt.GET("/access-control/stats", s.mgmt.GetAccessControlStats)
+		mgmt.GET("/access-control/clients", s.mgmt.GetClientWhitelist)
+		mgmt.PUT("/access-control/clients", s.mgmt.PutClientWhitelistActive)
+		mgmt.POST("/access-control/clients", s.mgmt.UpsertClientEntry)
+		mgmt.DELETE("/access-control/clients", s.mgmt.DeleteClientEntry)
+		mgmt.GET("/access-control/client-presets", s.mgmt.GetClientPresets)
 
 		mgmt.GET("/proxy-url", s.mgmt.GetProxyURL)
 		mgmt.PUT("/proxy-url", s.mgmt.PutProxyURL)

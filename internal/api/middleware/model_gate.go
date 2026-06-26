@@ -37,21 +37,26 @@ func ModelGateMiddleware(ctrl *accesscontrol.Controller) gin.HandlerFunc {
 			return
 		}
 
-		result := ctrl.CheckModel(partial.Model)
 		clientIP, _ := c.Get("clientIP")
 		ip, _ := clientIP.(string)
 		if ip == "" {
 			ip = c.ClientIP()
 		}
 
+		result := ctrl.CheckModelWithIP(partial.Model, ip)
+
 		switch result.Action {
 		case accesscontrol.ActionAllow, "":
 			c.Next()
 		case accesscontrol.ActionDeny:
 			ctrl.RecordInvalidModel(ip)
+			msg := "model " + partial.Model + " is not available"
+			if result.Reason != "" {
+				msg = result.Reason
+			}
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
 				"error": gin.H{
-					"message": "model " + partial.Model + " is not available",
+					"message": msg,
 					"type":    "model_unavailable",
 				},
 			})

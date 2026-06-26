@@ -30,6 +30,7 @@ type ModelPolicy struct {
 	RouteTo   string    `json:"route_to,omitempty"`
 	ChannelTo string    `json:"channel_to,omitempty"`
 	Reason    string    `json:"reason,omitempty"`
+	MaxRPM    int       `json:"max_rpm,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -59,6 +60,7 @@ type ModelCheckResult struct {
 	Action    string
 	RouteTo   string
 	ChannelTo string
+	Reason    string
 }
 
 type Controller struct {
@@ -69,6 +71,10 @@ type Controller struct {
 
 	invalidModelWindow  *slidingWindow
 	invalidAPIKeyWindow *slidingWindow
+	// per-(ip,model) rate-limit windows for MaxRPM enforcement
+	rpmWindows sync.Map // key: "ip\x00model" -> *slidingWindow
+
+	clientList *clientWhitelist
 
 	store  *store
 	stopCh chan struct{}
@@ -86,6 +92,7 @@ func NewController(dbPath string) (*Controller, error) {
 		autoPolicies:        make(map[string]AutoPolicy),
 		invalidModelWindow:  newSlidingWindow(),
 		invalidAPIKeyWindow: newSlidingWindow(),
+		clientList:          newClientWhitelist(),
 		store:               st,
 		stopCh:              make(chan struct{}),
 	}
@@ -124,8 +131,14 @@ func (c *Controller) loadFromStore() error {
 		c.autoPolicies[a.Type] = a
 	}
 
-	log.Infof("access control: loaded %d model policies, %d IP records, %d auto-policies",
-		len(c.modelPolicies), len(c.ipRecords), len(c.autoPolicies))
+	cwState, err := c.store.loadClientWhitelist()
+	if err != nil {
+		return err
+	}
+	c.clientList.load(cwState)
+
+	log.Infof("access control: loaded %d model policies, %d IP records, %d auto-policies, %d client entries",
+		len(c.modelPolicies), len(c.ipRecords), len(c.autoPolicies), len(cwState.Entries))
 	return nil
 }
 
@@ -177,18 +190,40 @@ func (c *Controller) removeExpiredIP(ip string) {
 }
 
 // CheckModel returns the policy action for the given model.
+// ip is used for RPM rate-limit tracking; pass empty string to skip rate limiting.
 func (c *Controller) CheckModel(model string) ModelCheckResult {
+	return c.CheckModelWithIP(model, "")
+}
+
+// CheckModelWithIP checks model policy and enforces MaxRPM against the given IP.
+func (c *Controller) CheckModelWithIP(model, ip string) ModelCheckResult {
 	c.mu.RLock()
 	p, ok := c.modelPolicies[model]
 	c.mu.RUnlock()
 	if !ok {
 		return ModelCheckResult{Action: ActionAllow}
 	}
+	// Enforce RPM limit before evaluating action.
+	if p.MaxRPM > 0 && ip != "" {
+		key := ip + "\x00" + model
+		val, _ := c.rpmWindows.LoadOrStore(key, newSlidingWindow())
+		sw := val.(*slidingWindow)
+		sw.record(ip, time.Now())
+		cnt := sw.count(ip, time.Minute)
+		if cnt > p.MaxRPM {
+			return ModelCheckResult{Action: ActionDeny, Reason: fmt.Sprintf("rate limit exceeded for model %s", model)}
+		}
+	}
 	return ModelCheckResult{
 		Action:    p.Action,
 		RouteTo:   p.RouteTo,
 		ChannelTo: p.ChannelTo,
 	}
+}
+
+// CheckClient returns (allowed, clientID, label) for the given request headers.
+func (c *Controller) CheckClient(userAgent, xProxyClient string) (bool, string, string) {
+	return c.clientList.Check(userAgent, xProxyClient)
 }
 
 // RecordInvalidModel records an invalid model request from the given IP
@@ -421,6 +456,30 @@ func (c *Controller) cleanupLoop() {
 			c.invalidAPIKeyWindow.purgeOlderThan(30 * time.Minute)
 		}
 	}
+}
+
+// --- Client whitelist management ---
+
+func (c *Controller) GetClientWhitelistState() ClientWhitelistState {
+	return c.clientList.State()
+}
+
+func (c *Controller) SetClientWhitelistActive(active bool) error {
+	c.clientList.SetActive(active)
+	state := c.clientList.State()
+	return c.store.saveClientWhitelist(state)
+}
+
+func (c *Controller) UpsertClientEntry(e ClientEntry) error {
+	c.clientList.Upsert(e)
+	state := c.clientList.State()
+	return c.store.saveClientWhitelist(state)
+}
+
+func (c *Controller) RemoveClientEntry(clientID string) error {
+	c.clientList.Remove(clientID)
+	state := c.clientList.State()
+	return c.store.saveClientWhitelist(state)
 }
 
 func (c *Controller) purgeExpiredIPs() {
