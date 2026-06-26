@@ -32,6 +32,11 @@ remote-management:
   # GitHub repository for the management control panel. Accepts a repository URL or releases API URL.
   panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
 
+  # Serve the management panel from a local directory instead of downloading from GitHub.
+  # When set, the server looks for index.html (or management.html) in this directory and skips GitHub sync.
+  # Useful for local development of the management UI. Supports ~ for home directory.
+  # panel-local-path: "/path/to/Cli-Proxy-API-Management-Center/dist"
+
 # Authentication directory (supports ~ for home directory)
 auth-dir: "~/.cli-proxy-api"
 
@@ -94,6 +99,37 @@ usage-statistics-enabled: false
 # The local Redis RESP usage output is disabled.
 # Default: 60. Max: 3600.
 redis-usage-queue-retention-seconds: 60
+
+# File path for the SQLite database used to persist usage statistics across restarts.
+# When empty or omitted, usage data is kept in memory only and lost on restart.
+# Requires usage-statistics-enabled: true to collect data.
+# Can also be set via USAGE_DB_PATH environment variable.
+# usage-db-path: "usage.db"
+
+# Access control settings for model policies and IP risk management.
+# When db-path is set, access control is enabled with SQLite persistence.
+# Can also be set via ACCESS_CONTROL_DB_PATH environment variable.
+# access-control:
+#   db-path: "access_control.db"
+#   auto-policy:
+#     # Auto-ban/risk-control when an IP sends too many requests for denied/unavailable models
+#     invalid-model-threshold: 50      # number of invalid model requests within window
+#     invalid-model-window: 300        # time window in seconds (default 5 minutes)
+#     invalid-model-action: "none"     # "ban", "risk_control", or "none"
+#     invalid-model-duration: 0        # duration in seconds (0 = permanent for ban)
+#     # Auto-ban/risk-control when an IP sends too many requests with invalid API keys
+#     invalid-apikey-threshold: 20     # number of invalid API key requests within window
+#     invalid-apikey-window: 300       # time window in seconds (default 5 minutes)
+#     invalid-apikey-action: "none"    # "ban", "risk_control", or "none"
+#     invalid-apikey-duration: 0       # duration in seconds (0 = permanent for ban)
+
+# Usage query whitelist
+# API keys listed here can query their own usage statistics via /usage-query.html and GET /v1/usage.
+# When empty or omitted, the usage query feature is disabled.
+# Requires usage-statistics-enabled: true to collect data.
+# usage-query-keys:
+#   - "your-api-key-1"
+#   - "your-api-key-2"
 
 # Proxy URL. Supports socks5/http/https protocols. Example: socks5://user:pass@192.168.1.1:1080/
 # Per-entry proxy-url also supports "direct" or "none" to bypass both the global proxy-url and environment proxies explicitly.

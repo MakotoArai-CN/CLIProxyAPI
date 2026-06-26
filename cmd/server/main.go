@@ -18,6 +18,7 @@ import (
 
 	"github.com/joho/godotenv"
 	configaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/access/config_access"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/accesscontrol"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/cmd"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -33,6 +34,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/store"
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/translator"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/tui"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -520,6 +522,59 @@ func main() {
 	coreauth.SetQuotaCooldownDisabled(cfg.DisableCooling)
 	coreauth.SetTransientErrorCooldownSeconds(cfg.TransientErrorCooldownSeconds)
 
+	usageDBPath := cfg.UsageDBPath
+	if v, ok := lookupEnv("USAGE_DB_PATH", "usage_db_path"); ok {
+		usageDBPath = v
+	}
+	var sqliteUsagePlugin *usage.SQLitePlugin
+	if usageDBPath != "" {
+		sqliteUsagePlugin, err = usage.NewSQLitePlugin(usageDBPath)
+		if err != nil {
+			log.Errorf("failed to initialize SQLite usage database: %v", err)
+			return
+		}
+		defer func() { _ = sqliteUsagePlugin.Close() }()
+		if errRestore := sqliteUsagePlugin.RestoreInto(usage.GetRequestStatistics()); errRestore != nil {
+			log.Errorf("failed to restore usage statistics from SQLite: %v", errRestore)
+		}
+		usage.RegisterSQLitePlugin(sqliteUsagePlugin)
+		log.Infof("usage statistics persistence enabled: %s", usageDBPath)
+	}
+
+	acDBPath := cfg.AccessControl.DBPath
+	if v, ok := lookupEnv("ACCESS_CONTROL_DB_PATH", "access_control_db_path"); ok {
+		acDBPath = v
+	}
+	var accessCtrl *accesscontrol.Controller
+	if acDBPath != "" {
+		accessCtrl, err = accesscontrol.NewController(acDBPath)
+		if err != nil {
+			log.Errorf("failed to initialize access control: %v", err)
+			return
+		}
+		defer func() { _ = accessCtrl.Close() }()
+		acCfg := cfg.AccessControl.AutoPolicy
+		if acCfg.InvalidModelThreshold > 0 {
+			_ = accessCtrl.SetAutoPolicy(accesscontrol.AutoPolicy{
+				Type:      accesscontrol.PolicyInvalidModel,
+				Threshold: acCfg.InvalidModelThreshold,
+				Window:    acCfg.InvalidModelWindow,
+				Action:    acCfg.InvalidModelAction,
+				Duration:  acCfg.InvalidModelDuration,
+			})
+		}
+		if acCfg.InvalidAPIKeyThreshold > 0 {
+			_ = accessCtrl.SetAutoPolicy(accesscontrol.AutoPolicy{
+				Type:      accesscontrol.PolicyInvalidAPIKey,
+				Threshold: acCfg.InvalidAPIKeyThreshold,
+				Window:    acCfg.InvalidAPIKeyWindow,
+				Action:    acCfg.InvalidAPIKeyAction,
+				Duration:  acCfg.InvalidAPIKeyDuration,
+			})
+		}
+		log.Infof("access control enabled: %s", acDBPath)
+	}
+
 	if err = logging.ConfigureLogOutput(cfg); err != nil {
 		log.Errorf("failed to configure log output: %v", err)
 		return
@@ -660,7 +715,7 @@ func main() {
 					password = localMgmtPassword
 				}
 
-				cancel, done := cmd.StartServiceBackgroundWithPluginHost(cfg, configFilePath, password, pluginHost)
+				cancel, done := cmd.StartServiceBackgroundWithPluginHost(cfg, configFilePath, password, pluginHost, cmd.AccessControlServerOption(accessCtrl)...)
 
 				client := tui.NewClient(cfg.Port, password)
 				ready := false
@@ -709,7 +764,7 @@ func main() {
 			} else if cfg.Home.Enabled {
 				log.Info("Home mode: remote model updates disabled")
 			}
-			cmd.StartServiceWithPluginHost(cfg, configFilePath, password, pluginHost)
+			cmd.StartServiceWithPluginHost(cfg, configFilePath, password, pluginHost, cmd.AccessControlServerOption(accessCtrl)...)
 		}
 	}
 }

@@ -318,6 +318,10 @@ type RemoteManagement struct {
 	// PanelGitHubRepository overrides the GitHub repository used to fetch the management panel asset.
 	// Accepts either a repository URL (https://github.com/org/repo) or an API releases endpoint.
 	PanelGitHubRepository string `yaml:"panel-github-repository"`
+	// PanelLocalPath serves the management panel from a local directory instead of downloading from GitHub.
+	// When set, the server looks for index.html (or management.html) in this directory and skips GitHub sync.
+	// Useful for local development of the management UI. Supports ~ for home directory.
+	PanelLocalPath string `yaml:"panel-local-path"`
 }
 
 // QuotaExceeded defines the behavior when API quota limits are exceeded.
@@ -1934,4 +1938,3 @@ type AccessControlAutoPolicy struct {
 	InvalidAPIKeyAction    string `yaml:"invalid-apikey-action" json:"invalid-apikey-action"`
 	InvalidAPIKeyDuration  int    `yaml:"invalid-apikey-duration" json:"invalid-apikey-duration"`
 }
-

@@ -117,6 +117,9 @@ func autoUpdateSkipReason(cfg *config.Config) (string, bool) {
 	if cfg.RemoteManagement.DisableAutoUpdatePanel {
 		return "disable-auto-update-panel is enabled", true
 	}
+	if strings.TrimSpace(cfg.RemoteManagement.PanelLocalPath) != "" {
+		return "panel-local-path is set", true
+	}
 	return "", false
 }
 

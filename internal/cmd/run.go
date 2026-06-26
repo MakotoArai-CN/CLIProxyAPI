@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/accesscontrol"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
@@ -17,6 +18,15 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
 )
+
+// AccessControlServerOption returns server options for the access control controller.
+// Returns nil if ctrl is nil.
+func AccessControlServerOption(ctrl *accesscontrol.Controller) []api.ServerOption {
+	if ctrl == nil {
+		return nil
+	}
+	return []api.ServerOption{api.WithAccessController(ctrl)}
+}
 
 // StartService builds and runs the proxy service using the exported SDK.
 // It creates a new proxy service instance, sets up signal handling for graceful shutdown,
@@ -31,13 +41,16 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 }
 
 // StartServiceWithPluginHost builds and runs the proxy service with a shared plugin host.
-func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host) {
+func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, extraOpts ...api.ServerOption) {
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
 		WithLocalManagementPassword(localPassword)
 	if host != nil {
 		builder = builder.WithPluginHost(host)
+	}
+	if len(extraOpts) > 0 {
+		builder = builder.WithServerOptions(extraOpts...)
 	}
 
 	ctxSignal, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -84,13 +97,16 @@ func StartServiceBackground(cfg *config.Config, configPath string, localPassword
 }
 
 // StartServiceBackgroundWithPluginHost starts the proxy service with a shared plugin host.
-func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host) (cancel func(), done <-chan struct{}) {
+func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, extraOpts ...api.ServerOption) (cancel func(), done <-chan struct{}) {
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
 		WithLocalManagementPassword(localPassword)
 	if host != nil {
 		builder = builder.WithPluginHost(host)
+	}
+	if len(extraOpts) > 0 {
+		builder = builder.WithServerOptions(extraOpts...)
 	}
 
 	ctx, cancelFn := context.WithCancel(context.Background())

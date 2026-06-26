@@ -288,6 +288,15 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	if disallowFreeAuthFromContext(ctx) {
 		meta[coreexecutor.DisallowFreeAuthMetadataKey] = true
 	}
+	if ctx != nil {
+		if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil {
+			if forceProvider, exists := ginCtx.Get("forceChannel"); exists {
+				if fp, ok := forceProvider.(string); ok && fp != "" {
+					meta[coreexecutor.ForceProviderMetadataKey] = fp
+				}
+			}
+		}
+	}
 	return meta
 }
 

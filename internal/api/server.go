@@ -455,8 +455,8 @@ func (s *Server) setupRoutes() {
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
-	v1.Use(AuthMiddleware(s.accessManager))
 	v1.Use(middleware.IPGateMiddleware(s.accessCtrl))
+	v1.Use(s.authMiddlewareWithTracking())
 	v1.Use(middleware.ClientGateMiddleware(s.accessCtrl))
 	v1.Use(middleware.ModelGateMiddleware(s.accessCtrl))
 	{
@@ -497,8 +497,8 @@ func (s *Server) setupRoutes() {
 
 	// Gemini compatible API routes
 	v1beta := s.engine.Group("/v1beta")
-	v1beta.Use(AuthMiddleware(s.accessManager))
 	v1beta.Use(middleware.IPGateMiddleware(s.accessCtrl))
+	v1beta.Use(s.authMiddlewareWithTracking())
 	v1beta.Use(middleware.ClientGateMiddleware(s.accessCtrl))
 	v1beta.Use(middleware.ModelGateMiddleware(s.accessCtrl))
 	{
@@ -898,6 +898,31 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
+
+	// Local development: serve directly from a local directory.
+	if localPath := strings.TrimSpace(cfg.RemoteManagement.PanelLocalPath); localPath != "" {
+		resolved, errResolve := util.ResolveAuthDir(localPath)
+		if errResolve != nil {
+			log.WithError(errResolve).Error("failed to resolve panel-local-path")
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+		for _, name := range []string{"index.html", "management.html"} {
+			candidate := filepath.Join(resolved, name)
+			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+				c.File(candidate)
+				return
+			}
+		}
+		if info, statErr := os.Stat(resolved); statErr == nil && !info.IsDir() {
+			c.File(resolved)
+			return
+		}
+		log.Errorf("panel-local-path %q does not contain index.html or management.html", resolved)
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
 	filePath := managementasset.FilePath(s.configFilePath)
 	if strings.TrimSpace(filePath) == "" {
 		c.AbortWithStatus(http.StatusNotFound)
@@ -1822,6 +1847,23 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 			log.Errorf("authentication middleware error: %v", err)
 		}
 		c.AbortWithStatusJSON(statusCode, gin.H{"error": err.Message})
+	}
+}
+
+// authMiddlewareWithTracking wraps AuthMiddleware and records invalid API key attempts
+// for access control auto-policy enforcement.
+func (s *Server) authMiddlewareWithTracking() gin.HandlerFunc {
+	base := AuthMiddleware(s.accessManager)
+	return func(c *gin.Context) {
+		base(c)
+		if c.IsAborted() && s.accessCtrl != nil {
+			ip, _ := c.Get("clientIP")
+			ipStr, _ := ip.(string)
+			if ipStr == "" {
+				ipStr = c.ClientIP()
+			}
+			s.accessCtrl.RecordInvalidAPIKey(ipStr)
+		}
 	}
 }
 
